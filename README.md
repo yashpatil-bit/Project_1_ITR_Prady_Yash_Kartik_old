@@ -15,10 +15,28 @@ their matching sockets with a **ROBOTIS OpenMANIPULATOR-X (Manipulator X)** and 
 
 Team: Prady, Yash, Kartik
 
+## Demo and results
+
+**Demo video:** https://youtu.be/mMg1J6pUPaM
+
+Best autonomous run on the real robot (14 Nov 2026, log `results/lab_runs/run_20261114_042611_autonomy.*`):
+**4/4 pegs placed, 0 failed attempts, 80.7 s in total** at `speed_scale 0.5`.
+
+| Peg | Shape | Time [s] | Gripper pitch | Placement check (distance from socket centre) |
+|---|---|---|---|---|
+| green | circle | 18.8 | 50° | 6 mm |
+| yellow | triangle | 18.8 | 47.5° | 6 mm |
+| blue | square | 19.9 | 55° | 8 mm |
+| orange | hexagon | 23.2 | 55° | 13 mm |
+
+All lab runs (the debugging runs included) are in `results/lab_runs/`; summarise them with
+`python3 scripts/evaluate_timing.py --dir results/lab_runs --mode autonomy`.
+
 ---
 
 ## Contents
 
+0. [Demo and results](#demo-and-results)
 1. [Hardware](#1-hardware)
 2. [Repository layout](#2-repository-layout)
 3. [Setup (OS, versions, dependencies)](#3-setup)
@@ -43,9 +61,9 @@ Team: Prady, Yash, Kartik
 |---|---|
 | Robot | ROBOTIS OpenMANIPULATOR-X: 4 × Dynamixel XM430-W350-T joints (IDs 11–14) + gripper motor (ID 15), 1 Mbps, protocol 2.0. The gripper has custom long fingers. |
 | Motor interface | U2D2 USB adapter on a U2D2 Power Hub Board, 12 V supply ("SAUMYA" brick). Shows up as `/dev/ttyUSB0`. |
-| Camera | One Intel RealSense depth camera on the aluminium post to the robot's side, looking down at the work area at an angle. The code supports any D4xx (D415/D435/D455). |
+| Camera | One Intel RealSense D435i on the aluminium post beside the robot, about 0.5 m above the table, looking down at the work area at an angle. Our laptop port gave USB 2.1, so it runs at 640×480 @ 15 fps (the code falls back automatically; USB 3 gives 848×480 @ 30). Any D4xx works. |
 | Scene | Metal plate in front of the robot. MDF socket board with triangle, square, hexagon and circle holes. ArUco marker on the plate, used for calibration. |
-| Pegs | ~10 cm tall, 4–6 cm across. **yellow = triangle, blue = square, orange = hexagon, green = circle**. |
+| Pegs | ~10 cm tall, 4 cm wide. **yellow = triangle, blue = square, orange = hexagon, green = circle**. The open gripper is 6 cm wide. |
 
 Frames: **robot base frame** = origin on the table surface directly **below the joint‑1 (base rotation) axis**,
 **x forward** (where the arm points with joint1 = 0), **y to the robot's left**, **z up**. Every
@@ -72,7 +90,7 @@ This follows the recommended structure, turned into two ROS 2 packages:
 └── peg_sorting/                       ← main ROS 2 package (ament_python)
     ├── config/
     │   ├── colors.yaml                ← HSV thresholds per peg colour + board
-    │   ├── camera_calib.yaml          ← camera→robot extrinsics + ArUco marker info
+    │   ├── camera_calib.yaml          ← camera→robot extrinsics, ArUco marker info, fine corrections (our lab values)
     │   ├── vision.yaml                ← camera settings, workspace, detection params
     │   ├── robot.yaml                 ← Dynamixel IDs, gripper ticks, kinematics, poses, speed limits
     │   ├── task.yaml                  ← grasp / place / transport / retry parameters
@@ -85,11 +103,13 @@ This follows the recommended structure, turned into two ROS 2 packages:
     │   │                pick_place_planner.py, board_placement.py
     │   ├── control/     dynamixel_bus.py (hardware), robot_interface.py (ROS client)
     │   ├── nodes/       driver_node.py, vision_node.py, task_manager.py, teleop_keyboard.py, estop.py
-    │   ├── tools/       scan_dynamixel, hsv_tuner, calibrate_aruco, calibrate_handeye,
-    │   │                check_calibration, suggest_board_pose, capture_dataset, train_yolo, evaluate_timing
+    │   ├── tools/       scan_dynamixel, hsv_tuner, calibrate_aruco, calibrate_arm, calibrate_workspace,
+    │   │                calibrate_handeye, check_calibration, suggest_board_pose, capture_dataset, train_yolo,
+    │   │                evaluate_timing
     │   ├── sim/         synthetic_scene.py (ray-cast RGB-D renderer for mock mode / tests)
     │   └── utils/       config, transforms, keyboard, run_logger
-    └── test/            pytest unit + end-to-end vision tests
+    └── test/            pytest unit + end-to-end vision tests (incl. real lab frames in test/data)
+results/lab_runs/                      ← logs of our real-robot runs (CSV + JSON) and calibration check images
 ```
 
 ## 3. Setup
@@ -151,7 +171,8 @@ cd ~/peg_ws && source /opt/ros/humble/setup.bash && colcon build --symlink-insta
 source /opt/ros/humble/setup.bash && source ~/peg_ws/install/setup.bash
 ```
 
-The launch scripts assume the workspace is at `~/peg_ws`; for another location, set `export PEG_WS=/path/to/ws`.
+The launch scripts find the workspace themselves (`~/peg_ws`, or the repository itself if you built inside it, as we
+did in `~/projects/Project_1_ITR_Prady_Yash_Kartik`); for another location set `export PEG_WS=/path/to/ws`.
 
 ## 4. Try it without hardware (mock mode)
 
@@ -172,10 +193,13 @@ cd ~/peg_ws/src/Project_1_ITR_Prady_Yash_Kartik
 ./launch/run_teleop.sh --mock                                     # practise teleop
 ```
 
-Results in mock mode (ROS 2 Humble): with the board as in the lab photo, the planner warns that the square and
-hexagon will arrive 13–17° rotated; they end up resting on the board and the run reports **2/4**. With the
-board where `suggest_board_pose` puts it (and the triangle turned as the scene report says): **4/4 in about 50 s,
-0 failures**. Section 8 explains why.
+Results in mock mode (ROS 2 Humble, `speed_scale 1.0`):
+* `sim_scene.yaml` is a deliberately bad setup. The scene report warns that the square and hexagon will arrive
+  13–17° rotated and that the green peg is too far away. The run reports **1/4**, failing exactly where it warned.
+* `sim_scene_aligned.yaml` has the board where `suggest_board_pose` puts it: **4/4 in 52 s, 0 failures**.
+
+Section 8 explains the orientation limit. The hand-tuned place offsets of the real arm (`task.yaml →
+place.socket_offset_m`) are ignored in mock mode.
 
 ## 5. First bring-up on the real robot
 
@@ -207,7 +231,9 @@ board where `suggest_board_pose` puts it (and the triangle turned as the scene r
 ## 6. Calibration
 
 The PDF asks for calibration notes for both RGB-D cameras. **This setup uses one RealSense** (one camera
-is enough; the code has a single `vision` node and nothing depends on a second view).
+is enough; the code has a single `vision` node and nothing depends on a second view). A second camera would be
+calibrated exactly the same way: 6.1 (intrinsics) and 6.2 A (ArUco extrinsics), each with its own
+`camera_calib.yaml`.
 
 ### 6.1 Intrinsics (per camera)
 
@@ -220,15 +246,18 @@ the lab lighting makes colours flicker.
 
 ### 6.2 Calibration sequence for our setup (do it in this order)
 
-What we learned on the real setup: the camera (overhead D435i) is accurate to < 2 % when checked against a ruler, but
+What we learned on the real setup: the camera is accurate to < 2 % when checked against a ruler, but
 **our arm does not match the stock Manipulator X model** (it reached ~8 % short and grasped too low). So the
-arm is calibrated first, then the camera is tied to the arm.
+arm is calibrated first, then the camera is tied to the arm. Redo A (and then C) whenever the camera or the
+marker is moved.
 
 **A. Camera → robot from the ArUco marker (5 min, vision node stopped).** Measure the black square side and the
 marker centre from the point under the base axis (x forward, y left), then:
 ```bash
-ros2 run peg_sorting calibrate_aruco --length 0.04 --x 0.099 --y 0.103 --yaw -90
+ros2 run peg_sorting calibrate_aruco --length 0.04 --x 0.102 --y 0.124 --yaw 90
 ```
+(our marker: 4 cm, centre at x 0.102 m, y 0.124 m, x-axis pointing to the robot's left. The camera came out at
+x 0.172, y 0.163, z 0.512 m.)
 The table **tilt** comes from a RANSAC plane over the whole visible table (a patch around the marker was 11°
 off on the shiny plate), the **height** from the marker itself. The check image shows the marker x-axis as a red
 arrow (set `--yaw` from it) and the robot axes, which must start under the base. Peg tops must then read ~100 mm.
@@ -255,9 +284,19 @@ fit residual is > 6 mm). **Restart the vision node**, put the board back.
 ros2 run peg_sorting check_calibration
 ```
 
-**E. Fine tuning (if needed).** One peg off while the others are fine:
-`ros2 run peg_sorting check_calibration --per-color --color <colour>`. A peg that lands a few mm beside its hole:
-shift its place point in `config/task.yaml → place.socket_offset_m`. See docs/calibration.md, sections 7b and 7c.
+**E. Per-colour check (we needed it).** The workspace calibration uses only the green cylinder, and the camera sees
+each colour/shape a little differently (our blue square was 20 mm off). With the pegs standing where they will be
+during the run:
+```bash
+ros2 run peg_sorting check_calibration --per-color             # or --color blue for one peg
+```
+Centre the open gripper over each peg with w/a/s/d and press ENTER. Each colour gets its own correction
+(`camera_calib.yaml → color_offset_m`). Restart the vision node.
+
+**F. Place offsets (we needed it).** If a peg is picked well but goes in a few mm beside its hole, shift its place
+point in `config/task.yaml → place.socket_offset_m` (robot frame, metres) in 1–2 mm steps and restart only the task
+manager. Our values for the successful run: square and triangle +2 mm x / −7 mm y, hexagon +3 mm x / −4 mm y.
+See `docs/calibration.md` (sections 7b and 7c).
 
 ### 6.3 Colour thresholds (parameter file `config/colors.yaml`)
 
@@ -277,14 +316,23 @@ cd ~/peg_ws/src/Project_1_ITR_Prady_Yash_Kartik
 ./launch/run_autonomy.sh                       # add --speed 1.3 to go faster, --no-confirm to skip the ENTER prompt
 ```
 What happens:
-1. The arm goes to the observe pose. Pegs and sockets are detected (averaged over 5 frames) and a **scene report** is printed:
-   each peg's colour, shape, position, its socket and the predicted yaw error.
-2. Press **ENTER** to start the timed run.
+1. The arm goes to the observe pose. (If the driver is still in emergency stop from an earlier run, it asks you to
+   press ENTER to release it.) Pegs and sockets are detected (averaged over 5 frames) and a **scene report** is printed:
+   each peg's colour, shape and position, its socket, and the predicted yaw error. It also warns about setup problems
+   that make a peg fail:
+   * `WARNING ... turn this peg N deg clockwise`: the triangle would settle the wrong way round (section 8).
+   * `WARNING ... turn the board`: a socket's yaw error is over its limit (square 10°, hexagon 15°, triangle 6°).
+   * `!! ... a corner points at a jaw`: a 4 cm square with a corner towards a jaw is 5.7 cm across and the open
+     gripper is 6 cm. Turn the square so a flat side faces the robot, and the hexagon so a corner points at the robot.
+   * `!! ... the open jaw comes down where <peg> stands`: pegs too close side by side. Keep centres ≥ 8 cm apart.
+2. Fix those, restart the task manager if you changed anything, then press **ENTER** to start the timed run.
 3. For each peg (nearest first): plan → open → approach above the peg → **vertical descent** → settle → close
    (**grasp check**: did the gripper stop on something?) → lift → transport around the other pegs → **slow guarded insertion**
    (if it is blocked, back off and retry with ±4 mm offsets) → settle → release → retreat.
-4. Back to the observe pose: **verify** the peg is in its socket (x-y within 25 mm and *not* sitting one board thickness
-   too high). If not, retry (max 2 retries; a known orientation problem is not retried).
+4. Back to the observe pose: **verify** the peg is in its socket. It fails if the peg sits one board thickness too high
+   (resting on the board) or its top is more than 15 mm off the socket centre (leaning). A peg resting on or leaning
+   in its socket is **not grabbed again**: coming down on a tilted peg knocks it over. Other failures (e.g. a missed
+   grasp) are retried, at most 2 times.
 5. The summary and log path are printed.
 
 Keys in that terminal: **SPACE = emergency stop**, `q` = abort after the current step.
@@ -316,7 +364,8 @@ The Manipulator X has **no wrist roll**. All three pitch joints are parallel, so
 is always the base angle `joint1 = atan2(y, x)`. The jaws always close **tangentially**
 (perpendicular to the line from the robot base). Consequences:
 
-* A parallel-jaw **squeeze** turns a square or hexagon peg until a flat face lies against each jaw.
+* A parallel-jaw **squeeze** turns a square or hexagon peg until a flat face lies against each jaw, and a triangle
+  until one face lies on one jaw and the opposite corner on the other.
 * The peg turns with joint 1 while it is carried.
 * So **the yaw at which a peg arrives at its socket is fixed by the socket's bearing from the robot.** No
   trajectory, re-grasp or retry can change it, because every top-grasp move keeps `peg yaw − bearing` constant.
@@ -334,8 +383,11 @@ What the software does about it:
 * The **triangle** can settle in one of two orientations, 60° apart, depending on how the peg is standing before the
   grasp. When the other one would line up, the scene report says **"turn this peg by N° before starting"**. Do that while
   setting up the pegs.
+* **Triangle centring**: a triangle's centre is not midway between a face and the opposite corner, so the gripper is
+  aimed at the middle of the triangle's outline (up to 5.8 mm off its centre) and, when placing, the peg's centre
+  (not the tool point) is put on the socket (`task.yaml → grasp.triangle_centering`).
 * Insertion is slow and guarded, with small offset retries, and verification detects a peg left resting on the
-  board. A placement that failed because of a known yaw error is not retried.
+  board or leaning. A placement that failed because of a known yaw error is not retried.
 * `task.yaml → alignment.grasp_model`: `squeeze` (default; hard fingers turn the peg) or `hold` (soft fingers grip the
   peg without turning it). With `hold`, the scene report tells you by how much to **rotate each peg** before
   starting. **Test which model your gripper follows**: put the square peg down 20° rotated, close the gripper on it and
@@ -356,7 +408,9 @@ What the software does about it:
 * Joint limits are checked in IK, in the planner and again in the driver. Trajectories outside them are rejected.
 * Speeds: `robot.yaml → limits` (1.5 rad/s, 0.2 m/s by default). Insertion runs at 4 cm/s and is **guarded**: if the
   tracking error goes above 0.2 rad (the arm is pushing against something), it stops.
-* The driver starts by holding the current pose (no jump at torque-on). Ctrl‑C in the task manager sends an emergency stop.
+* The driver starts by holding the current pose (no jump at torque-on). **Ctrl‑C in the task manager** stops the arm
+  where it is and then releases the stop again, so the next run can move. If the task manager starts while the
+  driver is still in emergency stop (e.g. after SPACE), it says so and releases it only after you press ENTER.
 * Before the first run at full speed, run once with `--speed 0.5`, keeping a hand on the stop key.
 
 ## 10. Evaluation: success rate and timing
@@ -427,10 +481,10 @@ failure reasons. Raise `task.yaml → execution.speed_scale` (or `--speed`) step
 | File | What to edit |
 |---|---|
 | `config/colors.yaml` | HSV ranges per peg colour and for the board; colour → shape prior |
-| `config/camera_calib.yaml` | written by the calibration tools; marker size + position for ArUco calibration; `xyz_correction_m` |
+| `config/camera_calib.yaml` | written by the calibration tools: `T_base_cam` (ArUco), `planar_correction` (workspace), `xyz_correction_m` (check), `color_offset_m` (per-colour check); marker size + position |
 | `config/vision.yaml` | camera resolution / exposure, **workspace bounds**, board thickness, detection thresholds, `shape_backend` |
 | `config/robot.yaml` | port, IDs, joint signs, **gripper ticks**, **tool_length**, joint limits, **observe/home poses**, speed limits |
-| `config/task.yaml` | grasp depth, approach clearance, insertion speeds/heights, transport clearance, retries, `speed_scale`, `grasp_model`, log dir |
+| `config/task.yaml` | grasp depth (3 cm below the peg top), gripper pitch limits, approach clearance, insertion speeds/heights, **`place.socket_offset_m`** (per-socket place shift), transport clearance, `alignment.tolerance_deg(_by_shape)`, `grasp_model`, `triangle_centering`, `min_jaw_gap`, verification (`verify_tolerance`, `lean_tolerance`), retries, `speed_scale`, log dir |
 
 ## 13. Optional: YOLOv8 shape detection
 
@@ -460,10 +514,14 @@ position and yaw still come from depth.
 | Jerky motion / slow control loop | run `scripts/setup_usb_latency.sh` (USB latency 16 ms → 1 ms) |
 | `No device connected` (RealSense) | udev rules (setup step 5), use a USB **3** port/cable, close `realsense-viewer` |
 | Positions off by a constant | `check_calibration` → `xyz_correction_m` |
+| One peg colour picked off-centre, the others fine | `check_calibration --per-color --color <colour>` (section 6.2 E) |
+| A peg goes in a few mm beside its hole | `task.yaml → place.socket_offset_m` for that shape (section 6.2 F) |
+| Every move `goal rejected` | the driver is still in emergency stop: release it (section 9); the task manager offers this at start-up |
+| Jaw lands on the peg / peg tilts in the gripper | corner towards a jaw or neighbour too close: follow the `!!` lines of the scene report |
 | Peg not detected | `hsv_tuner`; check `vision.yaml → workspace`; is the arm in the observe pose blocking the view? |
 | Socket missing | a peg standing in front of it (from the camera's view)? Move it; check `colors.yaml → board` |
 | Gripper closes but "grasp failed" | adjust `gripper.closed_ticks` / `grasp_detect_fraction`; lower `grasp_depth` |
-| Arm stops at insertion (blocked) | yaw misaligned (section 8) or calibration off by > 3 mm |
+| Arm stops at insertion (blocked) / peg rests on the board | yaw misaligned (section 8) or calibration off by > 3 mm |
 | `GOAL_TOLERANCE_VIOLATED` warnings | gravity sag of joint 2; harmless below about 0.05 rad, or raise `driver.goal_tolerance_rad` |
 
 ## 15. Tests
@@ -471,7 +529,7 @@ position and yaw still come from depth.
 ```bash
 cd ~/peg_ws/src/Project_1_ITR_Prady_Yash_Kartik/peg_sorting && python3 -m pytest -q test
 ```
-These cover the kinematics (FK/IK round trip, straight vertical approach, velocity limits), the shape classifier on noisy
+27 tests. They cover the kinematics (FK/IK round trip, straight vertical approach, velocity limits), the shape classifier on noisy
 samples, end-to-end vision on the rendered scene (positions within 4 mm, yaw within 4°, all sockets found), ArUco
-calibration accuracy (< 5 mm, < 1°), the planner (constant pitch, insertion depth, gripper sequence),
-obstacle avoidance and the orientation model.
+calibration accuracy (< 5 mm, < 1°), detection on real frames from our lab, the planner (constant pitch, insertion
+depth, gripper sequence, triangle offsets), obstacle avoidance, open-jaw clearance and the orientation model.

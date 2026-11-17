@@ -29,9 +29,10 @@
   - **Peg rotation.** The open gripper is only 6 cm wide. A 4 cm square with a corner pointing
     at a jaw is 5.7 cm across, so the jaw lands on the corner. Turn the square so a flat side faces
     the robot. Turn the hexagon so a corner points at the robot. The report gives the angle.
-  - **Square yaw.** The square must show a yaw error of 4 degrees or less. Nudge the board
-    (turn and slide it) while watching the numbers next to the sockets in the vision window, or
-    run `ros2 run peg_sorting suggest_board_pose`.
+  - **Yaw.** The square must show a yaw error of 10° or less (hexagon 15°, triangle 6°). For the
+    triangle, turn the peg as the report says. For the square/hexagon, nudge the board (turn and
+    slide it) while watching the numbers next to the sockets in the vision window, or run
+    `ros2 run peg_sorting suggest_board_pose`.
 - ENTER starts the timer. Hands off; SPACE if anything looks wrong.
 - At the end the summary prints pegs placed, time and failures. Show `python3 scripts/evaluate_timing.py --last 1`.
 
@@ -45,6 +46,9 @@ ENTER (timer) → `v` → for each peg: `1`..`4`, `f` down, `c`, `r` up, `5`..`8
 | Symptom | Quick action |
 |---|---|
 | Peg missed by a few mm, every time | `check_calibration` (2 min) |
+| One colour picked off-centre | `check_calibration --per-color --color <colour>`, restart vision |
+| Peg goes in a few mm beside its hole | `task.yaml → place.socket_offset_m`, restart the task manager |
+| Every move "goal rejected" | emergency stop still on: press ENTER when the task manager asks, or `r` in `estop` |
 | A colour not detected | `hsv_tuner` for that colour |
 | Peg rests on the board instead of going in | yaw: rotate the board (watch the numbers in the window) |
 | Arm hits a peg during transport | raise `task.yaml → transport.obstacle_margin` |
